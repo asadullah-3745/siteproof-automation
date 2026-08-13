@@ -1,0 +1,12 @@
+{
+  "name": "01 - job.closed listener (master)",
+  "nodes": [
+    { "parameters": { "httpMethod": "POST", "path": "job-closed" },
+      "name": "Webhook job.closed", "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1, "position": [250, 300] },
+    { "parameters": { "functionCode": "// TODO: validate payload, dedupe on job.id\nreturn items;" },
+      "name": "Validate + dedupe", "type": "n8n-nodes-base.function",
+      "typeVersion": 1, "position": [500, 300] }
+  ],
+  "connections": { "Webhook job.closed": { "main": [[{ "node": "Validate + dedupe", "type": "main", "index": 0 }]] } }
+}

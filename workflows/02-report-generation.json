@@ -1,0 +1,8 @@
+{
+  "name": "02 - report generation",
+  "nodes": [
+    { "parameters": {}, "name": "Start", "type": "n8n-nodes-base.start", "typeVersion": 1, "position": [250, 300] },
+    { "parameters": { "functionCode": "// TODO: assemble findings -> HTML -> PDF -> upload -> PATCH report record\nreturn items;" }, "name": "Build PDF", "type": "n8n-nodes-base.function", "typeVersion": 1, "position": [500, 300] }
+  ],
+  "connections": { "Start": { "main": [[{ "node": "Build PDF", "type": "main", "index": 0 }]] } }
+}

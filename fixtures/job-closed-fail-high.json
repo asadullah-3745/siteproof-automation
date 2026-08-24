@@ -1,0 +1,41 @@
+{
+  "event": "job.closed",
+  "deliveryId": "aaaaaaaa-0003-4000-8000-000000000003",
+  "occurredAt": "2026-08-13T12:00:00.000Z",
+  "org": {
+    "id": "bbbbbbbb-0001-4000-8000-000000000001",
+    "name": "KeepCodeIn Solar",
+    "branding": { "primaryColor": "#0B3D2E", "logoUrl": null },
+    "settings": {
+      "alertChannel": "email",
+      "supervisorEmail": "supervisor@siteproof.local",
+      "criticalChannel": "email",
+      "adminOrigin": "http://localhost:5173",
+      "sheetId": null
+    }
+  },
+  "job": {
+    "id": "cccccccc-0003-4000-8000-000000000003",
+    "site": "4 Sunset Lane, DHA Phase 6",
+    "jobType": "solar_install_inspection",
+    "status": "closed",
+    "closedAt": "2026-08-13T12:00:00.000Z",
+    "rulebookId": "dddddddd-0001-4000-8000-000000000001",
+    "worker": { "id": "eeeeeeee-0002-4000-8000-000000000002", "name": "Ali Worker", "email": "worker@siteproof.local" },
+    "counts": { "pass": 0, "review": 0, "fail": 1 },
+    "headline": "fail",
+    "findings": [
+      {
+        "id": "ffffffff-0003-4000-8000-000000000020",
+        "transcript": "Positive DC conductor is exposed at the roof penetration. Insulation is nicked.",
+        "attributes": { "object": "dc_cable", "condition": "insulation_damaged", "location": "roof_penetration" },
+        "verdict": "fail",
+        "severity": "high",
+        "citedClause": { "ref": "SOP §4.2", "text": "DC conductors must remain fully insulated and mechanically protected at every penetration." },
+        "reason": "Live DC insulation is damaged and unprotected — shock and fire risk.",
+        "photoUrls": ["https://placehold.co/800x600/png?text=Exposed+DC"]
+      }
+    ],
+    "report": { "id": "99999999-0003-4000-8000-000000000003", "status": "pending" }
+  }
+}

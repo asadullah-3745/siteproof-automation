@@ -1,0 +1,41 @@
+{
+  "event": "job.closed",
+  "deliveryId": "aaaaaaaa-0001-4000-8000-000000000001",
+  "occurredAt": "2026-08-13T10:00:00.000Z",
+  "org": {
+    "id": "bbbbbbbb-0001-4000-8000-000000000001",
+    "name": "KeepCodeIn Solar",
+    "branding": { "primaryColor": "#0B3D2E", "logoUrl": null },
+    "settings": {
+      "alertChannel": "email",
+      "supervisorEmail": "supervisor@siteproof.local",
+      "criticalChannel": "email",
+      "adminOrigin": "http://localhost:5173",
+      "sheetId": null
+    }
+  },
+  "job": {
+    "id": "cccccccc-0001-4000-8000-000000000001",
+    "site": "12 Harbour Rd, Karachi",
+    "jobType": "solar_install_inspection",
+    "status": "closed",
+    "closedAt": "2026-08-13T10:00:00.000Z",
+    "rulebookId": "dddddddd-0001-4000-8000-000000000001",
+    "worker": { "id": "eeeeeeee-0001-4000-8000-000000000001", "name": "Ali Worker", "email": "worker@siteproof.local" },
+    "counts": { "pass": 2, "review": 0, "fail": 0 },
+    "headline": "pass",
+    "findings": [
+      {
+        "id": "ffffffff-0001-4000-8000-000000000001",
+        "transcript": "Array is level, all mid clamps seated, torque paint visible.",
+        "attributes": { "object": "solar_array", "condition": "secured" },
+        "verdict": "pass",
+        "severity": "low",
+        "citedClause": { "ref": "SOP §2.1", "text": "Modules must be mechanically fastened at all specified clamp points." },
+        "reason": "Clamp points and torque marks match the SOP.",
+        "photoUrls": ["https://placehold.co/800x600/png?text=Panel+Array"]
+      }
+    ],
+    "report": { "id": "99999999-0001-4000-8000-000000000001", "status": "pending" }
+  }
+}

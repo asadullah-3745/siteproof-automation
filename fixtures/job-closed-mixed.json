@@ -1,0 +1,70 @@
+{
+  "event": "job.closed",
+  "deliveryId": "3d2a0b1e-4c55-4c0e-9c3a-0b9f6e2a1111",
+  "occurredAt": "2026-08-19T09:20:00.000Z",
+  "org": {
+    "id": "bbbbbbbb-0001-4000-8000-000000000001",
+    "name": "KeepCodeIn Solar",
+    "branding": { "primaryColor": "#0B3D2E", "logoUrl": null },
+    "settings": {
+      "alertChannel": "email",
+      "supervisorEmail": "supervisor@siteproof.local",
+      "criticalChannel": "email",
+      "adminOrigin": "http://localhost:5173",
+      "sheetId": null
+    }
+  },
+  "job": {
+    "id": "cccccccc-0004-4000-8000-000000000004",
+    "site": "12 Oak Lane, inverter bay",
+    "jobType": "solar_install_inspection",
+    "status": "closed",
+    "closedAt": "2026-08-19T09:20:00.000Z",
+    "rulebookId": "dddddddd-0001-4000-8000-000000000001",
+    "worker": {
+      "id": "eeeeeeee-0001-4000-8000-000000000001",
+      "name": "Ali Worker",
+      "email": "worker@siteproof.local"
+    },
+    "counts": { "pass": 1, "review": 1, "fail": 1 },
+    "headline": "fail",
+    "findings": [
+      {
+        "id": "ffffffff-0004-4000-8000-000000000030",
+        "transcript": "Array torque marks are good.",
+        "attributes": { "object": "solar_array", "condition": "secured" },
+        "verdict": "pass",
+        "severity": "low",
+        "citedClause": { "ref": "SOP §2.1", "text": "Modules must be mechanically fastened at all specified clamp points." },
+        "reason": "All visible clamps show torque paint.",
+        "photoUrls": ["https://placehold.co/800x600/png?text=Array"]
+      },
+      {
+        "id": "ffffffff-0004-4000-8000-000000000031",
+        "transcript": "AC isolator label is faded.",
+        "attributes": { "object": "ac_isolator", "condition": "label_faded" },
+        "verdict": "review",
+        "severity": "low",
+        "citedClause": { "ref": "SOP §3.4", "text": "Isolators must be permanently labelled." },
+        "reason": "Label present but durability is questionable.",
+        "photoUrls": ["https://placehold.co/800x600/png?text=Labelling"]
+      },
+      {
+        "id": "ffffffff-0004-4000-8000-000000000032",
+        "transcript": "wiring exposed near the inverter",
+        "attributes": {
+          "object": "cable",
+          "condition": "exposed",
+          "location": "inverter",
+          "apparentIssue": "conductors not enclosed"
+        },
+        "verdict": "fail",
+        "severity": "high",
+        "citedClause": { "ref": "SOP §4.2", "text": "Conductors must be enclosed." },
+        "reason": "Exposed cabling at the inverter is not enclosed.",
+        "photoUrls": ["https://placehold.co/800x600/png?text=Exposed+DC"]
+      }
+    ],
+    "report": { "id": "99999999-0004-4000-8000-000000000004", "status": "pending" }
+  }
+}

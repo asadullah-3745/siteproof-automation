@@ -1,8 +1,550 @@
 {
-  "name": "05 - system update",
+  "id": "siteproof-wf5-system-update",
+  "name": "05 - System update",
+  "active": false,
   "nodes": [
-    { "parameters": {}, "name": "Start", "type": "n8n-nodes-base.start", "typeVersion": 1, "position": [250, 300] },
-    { "parameters": { "functionCode": "// TODO: map outcome -> append Google Sheet row / update CRM\nreturn items;" }, "name": "System update", "type": "n8n-nodes-base.function", "typeVersion": 1, "position": [500, 300] }
+    {
+      "id": "wf5-note",
+      "name": "wf5-note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        0
+      ],
+      "parameters": {
+        "content": "## WF5 — System update\n\nAlways. Upsert Google Sheet on jobId.\njobId | site | workerEmail | pass | review | fail | headline | closedAt | reportLink\nAction system.sheet.",
+        "width": 500,
+        "height": 300,
+        "color": 6
+      }
+    },
+    {
+      "id": "wf5-exec-trigger",
+      "name": "When called by master",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        360
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "wf5-manual",
+      "name": "Manual test (fixture)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        560
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "wf5-normalize",
+      "name": "Normalize input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        440
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function envConfig() {\n  return {\n    api_base_url: \"http://host.docker.internal:3000/api/v1\",\n    api_key: \"6e7a13827c81a340912848525588109f893aabcb017d7c59769d817ee3aa12c42350e1b599ae0134a3d11883b3044f73\",\n    webhook_secret: \"change-me-to-a-long-random-webhook-secret\",\n    from_email: \"alerts@siteproof.local\",\n    supervisor_email_default: \"asadullah.rana153@gmail.com\",\n    slack_webhook_url: \"\",\n    pdf_api_url: \"http://gotenberg:3000/forms/chromium/convert/html\",\n    sheet_tab: \"Job Outcomes\",\n    sheet_id_default: \"16L4snMGoJ3aiuWNJzRaNIgRambQxkvb2Sg15W-lnMOk\",\n    admin_origin_default: \"http://localhost:5173\",\n    org_name_default: \"KeepCodeIn Solar\",\n    logo_url_default: \"\",\n    primary_color_default: \"#0B3D2E\",\n    cloudinary_cloud_name: \"dtndx858m\",\n    cloudinary_api_key: \"133699758828445\",\n    cloudinary_api_secret: \"PfCMNer_7EdK0_YWk8ecUt6LYbY\",\n    cloudinary_folder: \"siteproof/reports\",\n  };\n}\n\nfunction normalizeFinding(f) {\n  const clause = f.citedClause || f.cited_clause || {};\n  const photos = f.photoUrls || f.media_refs || [];\n  return {\n    id: f.id,\n    transcript: f.transcript || '',\n    attributes: f.attributes || f.extracted_attrs || {},\n    extracted_attrs: f.attributes || f.extracted_attrs || {},\n    verdict: f.verdict,\n    severity: f.severity,\n    citedClause: clause,\n    cited_clause: clause,\n    reason: f.reason || '',\n    photoUrls: photos,\n    media_refs: photos,\n  };\n}\n\nfunction countFindings(findings) {\n  return {\n    pass: findings.filter(function (f) { return f.verdict === 'pass'; }).length,\n    review: findings.filter(function (f) { return f.verdict === 'review'; }).length,\n    fail: findings.filter(function (f) { return f.verdict === 'fail'; }).length,\n  };\n}\n\nfunction headlineFromCounts(counts) {\n  if (counts.fail) return 'fail';\n  if (counts.review) return 'review';\n  if (counts.pass) return 'pass';\n  return 'open';\n}\n\nfunction wrapPayload(input) {\n  const envc = envConfig();\n  let body = input;\n  if (input && input.body && (input.body.job || input.body.event === 'job.closed' || input.body.event_type)) {\n    body = input.body;\n  }\n  if (body.job && body.job.id) {\n    const jobIn = body.job;\n    const org = body.org || {};\n    const settings = org.settings || {};\n    const branding = org.branding || {};\n    const findings = (jobIn.findings || []).map(normalizeFinding);\n    const counts = jobIn.counts || countFindings(findings);\n    const admin = String(settings.adminOrigin || envc.admin_origin_default || 'http://localhost:5173').replace(/\\/$/, '');\n    const job = Object.assign({}, jobIn, {\n      findings: findings,\n      counts: counts,\n      headline: jobIn.headline || headlineFromCounts(counts),\n      jobType: jobIn.jobType || jobIn.job_type || '',\n    });\n    return {\n      deliveryId: body.deliveryId || '',\n      occurredAt: body.occurredAt,\n      org: org,\n      job: job,\n      flags: {\n        needs_routing: findings.some(function (f) { return f.verdict === 'review' || f.verdict === 'fail'; }),\n        needs_critical: findings.some(function (f) { return f.verdict === 'fail' && String(f.severity).toLowerCase() === 'high'; }),\n        needs_enrichment: findings.some(function (f) {\n          return !(f.photoUrls && f.photoUrls.length);\n        }),\n      },\n      config: Object.assign({}, envc, {\n        supervisor_email: settings.supervisorEmail || envc.supervisor_email_default,\n        alert_channel: settings.alertChannel || 'email',\n        critical_channel: settings.criticalChannel || 'email',\n        sheet_id: settings.sheetId || envc.sheet_id_default,\n        admin_origin: admin,\n        timestamp: String(Math.floor(Date.now() / 1000)),\n        branding: {\n          name: org.name || envc.org_name_default,\n          logo_url: branding.logoUrl || envc.logo_url_default,\n          primary_color: branding.primaryColor || envc.primary_color_default,\n        },\n      }),\n      job_url: admin + '/jobs/' + job.id,\n      report_url: admin + '/jobs/' + job.id,\n    };\n  }\n  throw new Error('INVALID_PAYLOAD: expected job.closed body with job.id');\n}\n\nasync function siteproofRequest(method, urlPath, body, idempotencyType, ctx) {\n  const ts = String(Math.floor(Date.now() / 1000));\n  const headers = {\n    'Content-Type': 'application/json',\n    'X-Api-Key': ctx.config.api_key,\n    'X-SiteProof-Timestamp': ts,\n  };\n  if (idempotencyType) headers['Idempotency-Key'] = ctx.job.id + ':' + idempotencyType;\n  return this.helpers.httpRequest({\n    method: method,\n    url: ctx.config.api_base_url + urlPath,\n    headers: headers,\n    body: body,\n    json: true,\n    ignoreHttpStatusErrors: true,\n    returnFullResponse: true,\n  });\n}\n\nasync function postAction(ctx, type, target, status, metadata) {\n  const key = ctx.job.id + ':' + type;\n  const staticData = $getWorkflowStaticData('global');\n  staticData.claims = staticData.claims || {};\n  staticData.claims[key] = { status: status, at: new Date().toISOString() };\n  try {\n    await siteproofRequest.call(this, 'POST', '/webhooks/n8n/actions', {\n      jobId: ctx.job.id,\n      type: type,\n      target: target || null,\n      status: status,\n      metadata: metadata || {},\n    }, type, ctx);\n  } catch (e) {}\n  return { type: type, target: target, status: status, metadata: metadata || {} };\n}\n\nfunction alreadyDone(jobId, type) {\n  const staticData = $getWorkflowStaticData('global');\n  staticData.claims = staticData.claims || {};\n  const row = staticData.claims[jobId + ':' + type];\n  return row && row.status === 'ok';\n}\nconst item = $input.first().json;\nif (item.job && item.config && item.job.id) {\n  return [{ json: item }];\n}\ntry {\n  const ctx = wrapPayload(item);\n  ctx.ok = true;\n  return [{ json: ctx }];\n} catch (e) {\n  return [{ json: { ok: false, httpStatus: 400, error: e.message } }];\n}"
+      }
+    },
+    {
+      "id": "wf5-already",
+      "name": "Check job idempotency",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        440
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function envConfig() {\n  return {\n    api_base_url: \"http://host.docker.internal:3000/api/v1\",\n    api_key: \"6e7a13827c81a340912848525588109f893aabcb017d7c59769d817ee3aa12c42350e1b599ae0134a3d11883b3044f73\",\n    webhook_secret: \"change-me-to-a-long-random-webhook-secret\",\n    from_email: \"alerts@siteproof.local\",\n    supervisor_email_default: \"asadullah.rana153@gmail.com\",\n    slack_webhook_url: \"\",\n    pdf_api_url: \"http://gotenberg:3000/forms/chromium/convert/html\",\n    sheet_tab: \"Job Outcomes\",\n    sheet_id_default: \"16L4snMGoJ3aiuWNJzRaNIgRambQxkvb2Sg15W-lnMOk\",\n    admin_origin_default: \"http://localhost:5173\",\n    org_name_default: \"KeepCodeIn Solar\",\n    logo_url_default: \"\",\n    primary_color_default: \"#0B3D2E\",\n    cloudinary_cloud_name: \"dtndx858m\",\n    cloudinary_api_key: \"133699758828445\",\n    cloudinary_api_secret: \"PfCMNer_7EdK0_YWk8ecUt6LYbY\",\n    cloudinary_folder: \"siteproof/reports\",\n  };\n}\n\nfunction normalizeFinding(f) {\n  const clause = f.citedClause || f.cited_clause || {};\n  const photos = f.photoUrls || f.media_refs || [];\n  return {\n    id: f.id,\n    transcript: f.transcript || '',\n    attributes: f.attributes || f.extracted_attrs || {},\n    extracted_attrs: f.attributes || f.extracted_attrs || {},\n    verdict: f.verdict,\n    severity: f.severity,\n    citedClause: clause,\n    cited_clause: clause,\n    reason: f.reason || '',\n    photoUrls: photos,\n    media_refs: photos,\n  };\n}\n\nfunction countFindings(findings) {\n  return {\n    pass: findings.filter(function (f) { return f.verdict === 'pass'; }).length,\n    review: findings.filter(function (f) { return f.verdict === 'review'; }).length,\n    fail: findings.filter(function (f) { return f.verdict === 'fail'; }).length,\n  };\n}\n\nfunction headlineFromCounts(counts) {\n  if (counts.fail) return 'fail';\n  if (counts.review) return 'review';\n  if (counts.pass) return 'pass';\n  return 'open';\n}\n\nfunction wrapPayload(input) {\n  const envc = envConfig();\n  let body = input;\n  if (input && input.body && (input.body.job || input.body.event === 'job.closed' || input.body.event_type)) {\n    body = input.body;\n  }\n  if (body.job && body.job.id) {\n    const jobIn = body.job;\n    const org = body.org || {};\n    const settings = org.settings || {};\n    const branding = org.branding || {};\n    const findings = (jobIn.findings || []).map(normalizeFinding);\n    const counts = jobIn.counts || countFindings(findings);\n    const admin = String(settings.adminOrigin || envc.admin_origin_default || 'http://localhost:5173').replace(/\\/$/, '');\n    const job = Object.assign({}, jobIn, {\n      findings: findings,\n      counts: counts,\n      headline: jobIn.headline || headlineFromCounts(counts),\n      jobType: jobIn.jobType || jobIn.job_type || '',\n    });\n    return {\n      deliveryId: body.deliveryId || '',\n      occurredAt: body.occurredAt,\n      org: org,\n      job: job,\n      flags: {\n        needs_routing: findings.some(function (f) { return f.verdict === 'review' || f.verdict === 'fail'; }),\n        needs_critical: findings.some(function (f) { return f.verdict === 'fail' && String(f.severity).toLowerCase() === 'high'; }),\n        needs_enrichment: findings.some(function (f) {\n          return !(f.photoUrls && f.photoUrls.length);\n        }),\n      },\n      config: Object.assign({}, envc, {\n        supervisor_email: settings.supervisorEmail || envc.supervisor_email_default,\n        alert_channel: settings.alertChannel || 'email',\n        critical_channel: settings.criticalChannel || 'email',\n        sheet_id: settings.sheetId || envc.sheet_id_default,\n        admin_origin: admin,\n        timestamp: String(Math.floor(Date.now() / 1000)),\n        branding: {\n          name: org.name || envc.org_name_default,\n          logo_url: branding.logoUrl || envc.logo_url_default,\n          primary_color: branding.primaryColor || envc.primary_color_default,\n        },\n      }),\n      job_url: admin + '/jobs/' + job.id,\n      report_url: admin + '/jobs/' + job.id,\n    };\n  }\n  throw new Error('INVALID_PAYLOAD: expected job.closed body with job.id');\n}\n\nasync function siteproofRequest(method, urlPath, body, idempotencyType, ctx) {\n  const ts = String(Math.floor(Date.now() / 1000));\n  const headers = {\n    'Content-Type': 'application/json',\n    'X-Api-Key': ctx.config.api_key,\n    'X-SiteProof-Timestamp': ts,\n  };\n  if (idempotencyType) headers['Idempotency-Key'] = ctx.job.id + ':' + idempotencyType;\n  return this.helpers.httpRequest({\n    method: method,\n    url: ctx.config.api_base_url + urlPath,\n    headers: headers,\n    body: body,\n    json: true,\n    ignoreHttpStatusErrors: true,\n    returnFullResponse: true,\n  });\n}\n\nasync function postAction(ctx, type, target, status, metadata) {\n  const key = ctx.job.id + ':' + type;\n  const staticData = $getWorkflowStaticData('global');\n  staticData.claims = staticData.claims || {};\n  staticData.claims[key] = { status: status, at: new Date().toISOString() };\n  try {\n    await siteproofRequest.call(this, 'POST', '/webhooks/n8n/actions', {\n      jobId: ctx.job.id,\n      type: type,\n      target: target || null,\n      status: status,\n      metadata: metadata || {},\n    }, type, ctx);\n  } catch (e) {}\n  return { type: type, target: target, status: status, metadata: metadata || {} };\n}\n\nfunction alreadyDone(jobId, type) {\n  const staticData = $getWorkflowStaticData('global');\n  staticData.claims = staticData.claims || {};\n  const row = staticData.claims[jobId + ':' + type];\n  return row && row.status === 'ok';\n}\nconst ctx = $input.first().json || {};\nif (!ctx.job || !ctx.job.id) {\n  return [{\n    json: {\n      ok: false,\n      httpStatus: 400,\n      error: 'Missing job on input — run from Manual test / When called by master so Normalize runs first',\n      inputKeys: Object.keys(ctx),\n      already: false,\n    },\n  }];\n}\nconst already = alreadyDone(ctx.job.id, \"system.sheet\");\nreturn [{ json: { ...ctx, already: already } }];"
+      }
+    },
+    {
+      "id": "wf5-if-done",
+      "name": "Already ok for this job?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        840,
+        440
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "wf5-if-done-cond",
+              "leftValue": "={{ Boolean($json.already) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wf5-dup",
+      "name": "Idempotent exit",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        280
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "wf5-map",
+      "name": "Map sheet row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        520
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ctx = $input.first().json;\nif (!ctx.config.sheet_id) {\n  return [{ json: { ...ctx, error_message: 'sheetId is not configured (org.settings.sheetId or SITEPROOF_SHEET_ID)' } }];\n}\nconst workerEmail = (ctx.job.worker && ctx.job.worker.email) || '';\nconst row = {\n  jobId: String(ctx.job.id),\n  site: String(ctx.job.site || ''),\n  workerEmail: String(workerEmail),\n  pass: String(ctx.job.counts.pass),\n  review: String(ctx.job.counts.review),\n  fail: String(ctx.job.counts.fail),\n  headline: String(ctx.job.headline || ''),\n  closedAt: String(ctx.job.closedAt || ''),\n  reportLink: String(ctx.job_url || ''),\n};\nreturn [{ json: Object.assign({}, ctx, row, { row: row }) }];"
+      }
+    },
+    {
+      "id": "wf5-if-cfg",
+      "name": "Sheet id missing?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        520
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "wf5-if-cfg-cond",
+              "leftValue": "={{ Boolean($json.error_message) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wf5-fail-cfg",
+      "name": "Action system.sheet failed (config)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        360
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function envConfig() {\n  return {\n    api_base_url: \"http://host.docker.internal:3000/api/v1\",\n    api_key: \"6e7a13827c81a340912848525588109f893aabcb017d7c59769d817ee3aa12c42350e1b599ae0134a3d11883b3044f73\",\n    webhook_secret: \"change-me-to-a-long-random-webhook-secret\",\n    from_email: \"alerts@siteproof.local\",\n    supervisor_email_default: \"asadullah.rana153@gmail.com\",\n    slack_webhook_url: \"\",\n    pdf_api_url: \"http://gotenberg:3000/forms/chromium/convert/html\",\n    sheet_tab: \"Job Outcomes\",\n    sheet_id_default: \"16L4snMGoJ3aiuWNJzRaNIgRambQxkvb2Sg15W-lnMOk\",\n    admin_origin_default: \"http://localhost:5173\",\n    org_name_default: \"KeepCodeIn Solar\",\n    logo_url_default: \"\",\n    primary_color_default: \"#0B3D2E\",\n    cloudinary_cloud_name: \"dtndx858m\",\n    cloudinary_api_key: \"133699758828445\",\n    cloudinary_api_secret: \"PfCMNer_7EdK0_YWk8ecUt6LYbY\",\n    cloudinary_folder: \"siteproof/reports\",\n  };\n}\n\nfunction normalizeFinding(f) {\n  const clause = f.citedClause || f.cited_clause || {};\n  const photos = f.photoUrls || f.media_refs || [];\n  return {\n    id: f.id,\n    transcript: f.transcript || '',\n    attributes: f.attributes || f.extracted_attrs || {},\n    extracted_attrs: f.attributes || f.extracted_attrs || {},\n    verdict: f.verdict,\n    severity: f.severity,\n    citedClause: clause,\n    cited_clause: clause,\n    reason: f.reason || '',\n    photoUrls: photos,\n    media_refs: photos,\n  };\n}\n\nfunction countFindings(findings) {\n  return {\n    pass: findings.filter(function (f) { return f.verdict === 'pass'; }).length,\n    review: findings.filter(function (f) { return f.verdict === 'review'; }).length,\n    fail: findings.filter(function (f) { return f.verdict === 'fail'; }).length,\n  };\n}\n\nfunction headlineFromCounts(counts) {\n  if (counts.fail) return 'fail';\n  if (counts.review) return 'review';\n  if (counts.pass) return 'pass';\n  return 'open';\n}\n\nfunction wrapPayload(input) {\n  const envc = envConfig();\n  let body = input;\n  if (input && input.body && (input.body.job || input.body.event === 'job.closed' || input.body.event_type)) {\n    body = input.body;\n  }\n  if (body.job && body.job.id) {\n    const jobIn = body.job;\n    const org = body.org || {};\n    const settings = org.settings || {};\n    const branding = org.branding || {};\n    const findings = (jobIn.findings || []).map(normalizeFinding);\n    const counts = jobIn.counts || countFindings(findings);\n    const admin = String(settings.adminOrigin || envc.admin_origin_default || 'http://localhost:5173').replace(/\\/$/, '');\n    const job = Object.assign({}, jobIn, {\n      findings: findings,\n      counts: counts,\n      headline: jobIn.headline || headlineFromCounts(counts),\n      jobType: jobIn.jobType || jobIn.job_type || '',\n    });\n    return {\n      deliveryId: body.deliveryId || '',\n      occurredAt: body.occurredAt,\n      org: org,\n      job: job,\n      flags: {\n        needs_routing: findings.some(function (f) { return f.verdict === 'review' || f.verdict === 'fail'; }),\n        needs_critical: findings.some(function (f) { return f.verdict === 'fail' && String(f.severity).toLowerCase() === 'high'; }),\n        needs_enrichment: findings.some(function (f) {\n          return !(f.photoUrls && f.photoUrls.length);\n        }),\n      },\n      config: Object.assign({}, envc, {\n        supervisor_email: settings.supervisorEmail || envc.supervisor_email_default,\n        alert_channel: settings.alertChannel || 'email',\n        critical_channel: settings.criticalChannel || 'email',\n        sheet_id: settings.sheetId || envc.sheet_id_default,\n        admin_origin: admin,\n        timestamp: String(Math.floor(Date.now() / 1000)),\n        branding: {\n          name: org.name || envc.org_name_default,\n          logo_url: branding.logoUrl || envc.logo_url_default,\n          primary_color: branding.primaryColor || envc.primary_color_default,\n        },\n      }),\n      job_url: admin + '/jobs/' + job.id,\n      report_url: admin + '/jobs/' + job.id,\n    };\n  }\n  throw new Error('INVALID_PAYLOAD: expected job.closed body with job.id');\n}\n\nasync function siteproofRequest(method, urlPath, body, idempotencyType, ctx) {\n  const ts = String(Math.floor(Date.now() / 1000));\n  const headers = {\n    'Content-Type': 'application/json',\n    'X-Api-Key': ctx.config.api_key,\n    'X-SiteProof-Timestamp': ts,\n  };\n  if (idempotencyType) headers['Idempotency-Key'] = ctx.job.id + ':' + idempotencyType;\n  return this.helpers.httpRequest({\n    method: method,\n    url: ctx.config.api_base_url + urlPath,\n    headers: headers,\n    body: body,\n    json: true,\n    ignoreHttpStatusErrors: true,\n    returnFullResponse: true,\n  });\n}\n\nasync function postAction(ctx, type, target, status, metadata) {\n  const key = ctx.job.id + ':' + type;\n  const staticData = $getWorkflowStaticData('global');\n  staticData.claims = staticData.claims || {};\n  staticData.claims[key] = { status: status, at: new Date().toISOString() };\n  try {\n    await siteproofRequest.call(this, 'POST', '/webhooks/n8n/actions', {\n      jobId: ctx.job.id,\n      type: type,\n      target: target || null,\n      status: status,\n      metadata: metadata || {},\n    }, type, ctx);\n  } catch (e) {}\n  return { type: type, target: target, status: status, metadata: metadata || {} };\n}\n\nfunction alreadyDone(jobId, type) {\n  const staticData = $getWorkflowStaticData('global');\n  staticData.claims = staticData.claims || {};\n  const row = staticData.claims[jobId + ':' + type];\n  return row && row.status === 'ok';\n}\nlet ctx = $input.first().json || {};\nif (!ctx.job || !ctx.job.id || !ctx.config) {\n  try { ctx = { ...$('Normalize input').first().json, ...ctx }; } catch (e) {}\n}\nif (!ctx.job || !ctx.job.id) {\n  return [{ json: { ok: false, error: 'Missing job context before action ' + \"system.sheet\", inputKeys: Object.keys($input.first().json || {}) } }];\n}\nconst type = \"system.sheet\";\nconst status = 'failed';\nconst target = 'unconfigured';\nconst metadata = { error: ctx.error_message };\nif (status === 'ok' && alreadyDone(ctx.job.id, type)) {\n  return [{ json: { ...ctx, action: { type: type, status: 'ok', duplicate: true } } }];\n}\nconst action = await postAction.call(this, ctx, type, target, status, metadata);\nreturn [{ json: { ...ctx, action: action } }];"
+      }
+    },
+    {
+      "id": "wf5-sheets",
+      "name": "Upsert Google Sheet row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1400,
+        640
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-account",
+          "name": "Google Sheets account"
+        }
+      },
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $json.config.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $json.config.sheet_tab }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "jobId": "={{ $json.jobId }}",
+            "site": "={{ $json.site }}",
+            "workerEmail": "={{ $json.workerEmail }}",
+            "pass": "={{ $json.pass }}",
+            "review": "={{ $json.review }}",
+            "fail": "={{ $json.fail }}",
+            "headline": "={{ $json.headline }}",
+            "closedAt": "={{ $json.closedAt }}",
+            "reportLink": "={{ $json.reportLink }}"
+          },
+          "schema": [
+            {
+              "id": "jobId",
+              "displayName": "jobId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "site",
+              "displayName": "site",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workerEmail",
+              "displayName": "workerEmail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pass",
+              "displayName": "pass",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "review",
+              "displayName": "review",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "fail",
+              "displayName": "fail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "headline",
+              "displayName": "headline",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "closedAt",
+              "displayName": "closedAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reportLink",
+              "displayName": "reportLink",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "useAppend": true,
+          "cellFormat": "USER_ENTERED"
+        }
+      }
+    },
+    {
+      "id": "wf5-ok",
+      "name": "Action system.sheet ok",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        560
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function envConfig() {\n  return {\n    api_base_url: \"http://host.docker.internal:3000/api/v1\",\n    api_key: \"6e7a13827c81a340912848525588109f893aabcb017d7c59769d817ee3aa12c42350e1b599ae0134a3d11883b3044f73\",\n    webhook_secret: \"change-me-to-a-long-random-webhook-secret\",\n    from_email: \"alerts@siteproof.local\",\n    supervisor_email_default: \"asadullah.rana153@gmail.com\",\n    slack_webhook_url: \"\",\n    pdf_api_url: \"http://gotenberg:3000/forms/chromium/convert/html\",\n    sheet_tab: \"Job Outcomes\",\n    sheet_id_default: \"16L4snMGoJ3aiuWNJzRaNIgRambQxkvb2Sg15W-lnMOk\",\n    admin_origin_default: \"http://localhost:5173\",\n    org_name_default: \"KeepCodeIn Solar\",\n    logo_url_default: \"\",\n    primary_color_default: \"#0B3D2E\",\n    cloudinary_cloud_name: \"dtndx858m\",\n    cloudinary_api_key: \"133699758828445\",\n    cloudinary_api_secret: \"PfCMNer_7EdK0_YWk8ecUt6LYbY\",\n    cloudinary_folder: \"siteproof/reports\",\n  };\n}\n\nfunction normalizeFinding(f) {\n  const clause = f.citedClause || f.cited_clause || {};\n  const photos = f.photoUrls || f.media_refs || [];\n  return {\n    id: f.id,\n    transcript: f.transcript || '',\n    attributes: f.attributes || f.extracted_attrs || {},\n    extracted_attrs: f.attributes || f.extracted_attrs || {},\n    verdict: f.verdict,\n    severity: f.severity,\n    citedClause: clause,\n    cited_clause: clause,\n    reason: f.reason || '',\n    photoUrls: photos,\n    media_refs: photos,\n  };\n}\n\nfunction countFindings(findings) {\n  return {\n    pass: findings.filter(function (f) { return f.verdict === 'pass'; }).length,\n    review: findings.filter(function (f) { return f.verdict === 'review'; }).length,\n    fail: findings.filter(function (f) { return f.verdict === 'fail'; }).length,\n  };\n}\n\nfunction headlineFromCounts(counts) {\n  if (counts.fail) return 'fail';\n  if (counts.review) return 'review';\n  if (counts.pass) return 'pass';\n  return 'open';\n}\n\nfunction wrapPayload(input) {\n  const envc = envConfig();\n  let body = input;\n  if (input && input.body && (input.body.job || input.body.event === 'job.closed' || input.body.event_type)) {\n    body = input.body;\n  }\n  if (body.job && body.job.id) {\n    const jobIn = body.job;\n    const org = body.org || {};\n    const settings = org.settings || {};\n    const branding = org.branding || {};\n    const findings = (jobIn.findings || []).map(normalizeFinding);\n    const counts = jobIn.counts || countFindings(findings);\n    const admin = String(settings.adminOrigin || envc.admin_origin_default || 'http://localhost:5173').replace(/\\/$/, '');\n    const job = Object.assign({}, jobIn, {\n      findings: findings,\n      counts: counts,\n      headline: jobIn.headline || headlineFromCounts(counts),\n      jobType: jobIn.jobType || jobIn.job_type || '',\n    });\n    return {\n      deliveryId: body.deliveryId || '',\n      occurredAt: body.occurredAt,\n      org: org,\n      job: job,\n      flags: {\n        needs_routing: findings.some(function (f) { return f.verdict === 'review' || f.verdict === 'fail'; }),\n        needs_critical: findings.some(function (f) { return f.verdict === 'fail' && String(f.severity).toLowerCase() === 'high'; }),\n        needs_enrichment: findings.some(function (f) {\n          return !(f.photoUrls && f.photoUrls.length);\n        }),\n      },\n      config: Object.assign({}, envc, {\n        supervisor_email: settings.supervisorEmail || envc.supervisor_email_default,\n        alert_channel: settings.alertChannel || 'email',\n        critical_channel: settings.criticalChannel || 'email',\n        sheet_id: settings.sheetId || envc.sheet_id_default,\n        admin_origin: admin,\n        timestamp: String(Math.floor(Date.now() / 1000)),\n        branding: {\n          name: org.name || envc.org_name_default,\n          logo_url: branding.logoUrl || envc.logo_url_default,\n          primary_color: branding.primaryColor || envc.primary_color_default,\n        },\n      }),\n      job_url: admin + '/jobs/' + job.id,\n      report_url: admin + '/jobs/' + job.id,\n    };\n  }\n  throw new Error('INVALID_PAYLOAD: expected job.closed body with job.id');\n}\n\nasync function siteproofRequest(method, urlPath, body, idempotencyType, ctx) {\n  const ts = String(Math.floor(Date.now() / 1000));\n  const headers = {\n    'Content-Type': 'application/json',\n    'X-Api-Key': ctx.config.api_key,\n    'X-SiteProof-Timestamp': ts,\n  };\n  if (idempotencyType) headers['Idempotency-Key'] = ctx.job.id + ':' + idempotencyType;\n  return this.helpers.httpRequest({\n    method: method,\n    url: ctx.config.api_base_url + urlPath,\n    headers: headers,\n    body: body,\n    json: true,\n    ignoreHttpStatusErrors: true,\n    returnFullResponse: true,\n  });\n}\n\nasync function postAction(ctx, type, target, status, metadata) {\n  const key = ctx.job.id + ':' + type;\n  const staticData = $getWorkflowStaticData('global');\n  staticData.claims = staticData.claims || {};\n  staticData.claims[key] = { status: status, at: new Date().toISOString() };\n  try {\n    await siteproofRequest.call(this, 'POST', '/webhooks/n8n/actions', {\n      jobId: ctx.job.id,\n      type: type,\n      target: target || null,\n      status: status,\n      metadata: metadata || {},\n    }, type, ctx);\n  } catch (e) {}\n  return { type: type, target: target, status: status, metadata: metadata || {} };\n}\n\nfunction alreadyDone(jobId, type) {\n  const staticData = $getWorkflowStaticData('global');\n  staticData.claims = staticData.claims || {};\n  const row = staticData.claims[jobId + ':' + type];\n  return row && row.status === 'ok';\n}\nconst sheetItem = $input.first().json || {};\nconst ctx = $('Map sheet row').first().json;\nconst type = 'system.sheet';\nconst sheetErr = (sheetItem.error && (sheetItem.error.message || sheetItem.error.description || sheetItem.error))\n  || sheetItem.error_message\n  || null;\nif (sheetErr) {\n  const action = await postAction.call(this, ctx, type, ctx.config.sheet_id, 'failed', { error: String(sheetErr) });\n  return [{ json: { ...ctx, action: action } }];\n}\nif (alreadyDone(ctx.job.id, type)) {\n  return [{ json: { ...ctx, action: { type: type, status: 'ok', duplicate: true } } }];\n}\nconst action = await postAction.call(this, ctx, type, ctx.config.sheet_id, 'ok', { jobId: ctx.job.id });\nreturn [{ json: { ...ctx, action: action } }];"
+      }
+    }
   ],
-  "connections": { "Start": { "main": [[{ "node": "System update", "type": "main", "index": 0 }]] } }
+  "connections": {
+    "When called by master": {
+      "main": [
+        [
+          {
+            "node": "Normalize input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual test (fixture)": {
+      "main": [
+        [
+          {
+            "node": "Normalize input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize input": {
+      "main": [
+        [
+          {
+            "node": "Check job idempotency",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check job idempotency": {
+      "main": [
+        [
+          {
+            "node": "Already ok for this job?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already ok for this job?": {
+      "main": [
+        [
+          {
+            "node": "Idempotent exit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Map sheet row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map sheet row": {
+      "main": [
+        [
+          {
+            "node": "Sheet id missing?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheet id missing?": {
+      "main": [
+        [
+          {
+            "node": "Action system.sheet failed (config)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Upsert Google Sheet row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Google Sheet row": {
+      "main": [
+        [
+          {
+            "node": "Action system.sheet ok",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {
+    "Manual test (fixture)": [
+      {
+        "json": {
+          "event": "job.closed",
+          "deliveryId": "3d2a0b1e-4c55-4c0e-9c3a-0b9f6e2a1111",
+          "occurredAt": "2026-08-19T09:20:00.000Z",
+          "org": {
+            "id": "bbbbbbbb-0001-4000-8000-000000000001",
+            "name": "KeepCodeIn Solar",
+            "branding": {
+              "primaryColor": "#0B3D2E",
+              "logoUrl": null
+            },
+            "settings": {
+              "alertChannel": "email",
+              "supervisorEmail": "supervisor@siteproof.local",
+              "criticalChannel": "email",
+              "adminOrigin": "http://localhost:5173",
+              "sheetId": null
+            }
+          },
+          "job": {
+            "id": "cccccccc-0004-4000-8000-000000000004",
+            "site": "12 Oak Lane, inverter bay",
+            "jobType": "solar_install_inspection",
+            "status": "closed",
+            "closedAt": "2026-08-19T09:20:00.000Z",
+            "rulebookId": "dddddddd-0001-4000-8000-000000000001",
+            "worker": {
+              "id": "eeeeeeee-0001-4000-8000-000000000001",
+              "name": "Ali Worker",
+              "email": "worker@siteproof.local"
+            },
+            "counts": {
+              "pass": 1,
+              "review": 1,
+              "fail": 1
+            },
+            "headline": "fail",
+            "findings": [
+              {
+                "id": "ffffffff-0004-4000-8000-000000000030",
+                "transcript": "Array torque marks are good.",
+                "attributes": {
+                  "object": "solar_array",
+                  "condition": "secured"
+                },
+                "verdict": "pass",
+                "severity": "low",
+                "citedClause": {
+                  "ref": "SOP §2.1",
+                  "text": "Modules must be mechanically fastened at all specified clamp points."
+                },
+                "reason": "All visible clamps show torque paint.",
+                "photoUrls": [
+                  "https://placehold.co/800x600/png?text=Array"
+                ]
+              },
+              {
+                "id": "ffffffff-0004-4000-8000-000000000031",
+                "transcript": "AC isolator label is faded.",
+                "attributes": {
+                  "object": "ac_isolator",
+                  "condition": "label_faded"
+                },
+                "verdict": "review",
+                "severity": "low",
+                "citedClause": {
+                  "ref": "SOP §3.4",
+                  "text": "Isolators must be permanently labelled."
+                },
+                "reason": "Label present but durability is questionable.",
+                "photoUrls": [
+                  "https://placehold.co/800x600/png?text=Labelling"
+                ]
+              },
+              {
+                "id": "ffffffff-0004-4000-8000-000000000032",
+                "transcript": "wiring exposed near the inverter",
+                "attributes": {
+                  "object": "cable",
+                  "condition": "exposed",
+                  "location": "inverter",
+                  "apparentIssue": "conductors not enclosed"
+                },
+                "verdict": "fail",
+                "severity": "high",
+                "citedClause": {
+                  "ref": "SOP §4.2",
+                  "text": "Conductors must be enclosed."
+                },
+                "reason": "Exposed cabling at the inverter is not enclosed.",
+                "photoUrls": [
+                  "https://placehold.co/800x600/png?text=Exposed+DC"
+                ]
+              }
+            ],
+            "report": {
+              "id": "99999999-0004-4000-8000-000000000004",
+              "status": "pending"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
 }

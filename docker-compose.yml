@@ -1,8 +1,40 @@
 services:
   n8n:
     image: n8nio/n8n:latest
-    ports: ["5678:5678"]
+    ports:
+      - "${N8N_PORT:-5677}:5678"
     environment:
       - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-Asia/Karachi}
+      - TZ=${GENERIC_TIMEZONE:-Asia/Karachi}
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - NODE_FUNCTION_ALLOW_BUILTIN=crypto
+      - N8N_PAYLOAD_SIZE_MAX=32
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-change-me-to-a-long-random-webhook-secret}
+      - SITEPROOF_WEBHOOK_SECRET=${WEBHOOK_SECRET:-change-me-to-a-long-random-webhook-secret}
+      - WEBHOOK_URL=${WEBHOOK_URL:-http://localhost:5677/}
+      - N8N_WEBHOOK_URL=${WEBHOOK_URL:-http://localhost:5677/}
+      - N8N_API_KEY=${N8N_API_KEY:-change-me-to-a-long-random-n8n-api-key}
+      - SITEPROOF_API_URL=${SITEPROOF_API_URL:-http://host.docker.internal:3000/api/v1}
+      - ADMIN_ORIGIN=${ADMIN_ORIGIN:-http://localhost:5173}
+      - SITEPROOF_ADMIN_URL=${SITEPROOF_ADMIN_URL:-http://localhost:5173}
+      - SITEPROOF_SUPERVISOR_EMAIL=${SITEPROOF_SUPERVISOR_EMAIL:-supervisor@siteproof.local}
+      - SITEPROOF_FROM_EMAIL=${SITEPROOF_FROM_EMAIL:-alerts@siteproof.local}
+      - SITEPROOF_SLACK_WEBHOOK=${SITEPROOF_SLACK_WEBHOOK:-}
+      - SITEPROOF_SHEET_ID=${SITEPROOF_SHEET_ID:-}
+      - SITEPROOF_SHEET_TAB=${SITEPROOF_SHEET_TAB:-Job Outcomes}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - SITEPROOF_PDF_API_URL=${SITEPROOF_PDF_API_URL:-http://gotenberg:3000/forms/chromium/convert/html}
+      - SITEPROOF_ORG_NAME=${SITEPROOF_ORG_NAME:-KeepCodeIn Solar}
+      - SITEPROOF_LOGO_URL=${SITEPROOF_LOGO_URL:-}
+      - SITEPROOF_PRIMARY_COLOR=${SITEPROOF_PRIMARY_COLOR:-#0B3D2E}
     volumes:
       - ./n8n_data:/home/node/.n8n
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - gotenberg
+
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    # Internal only. n8n uses http://gotenberg:3000

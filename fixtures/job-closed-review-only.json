@@ -1,0 +1,41 @@
+{
+  "event": "job.closed",
+  "deliveryId": "aaaaaaaa-0002-4000-8000-000000000002",
+  "occurredAt": "2026-08-13T11:00:00.000Z",
+  "org": {
+    "id": "bbbbbbbb-0001-4000-8000-000000000001",
+    "name": "KeepCodeIn Solar",
+    "branding": { "primaryColor": "#0B3D2E", "logoUrl": null },
+    "settings": {
+      "alertChannel": "email",
+      "supervisorEmail": "supervisor@siteproof.local",
+      "criticalChannel": "email",
+      "adminOrigin": "http://localhost:5173",
+      "sheetId": null
+    }
+  },
+  "job": {
+    "id": "cccccccc-0002-4000-8000-000000000002",
+    "site": "88 Clifton Block 5, Karachi",
+    "jobType": "solar_install_inspection",
+    "status": "closed",
+    "closedAt": "2026-08-13T11:00:00.000Z",
+    "rulebookId": "dddddddd-0001-4000-8000-000000000001",
+    "worker": { "id": "eeeeeeee-0001-4000-8000-000000000001", "name": "Ali Worker", "email": "worker@siteproof.local" },
+    "counts": { "pass": 1, "review": 1, "fail": 0 },
+    "headline": "review",
+    "findings": [
+      {
+        "id": "ffffffff-0002-4000-8000-000000000010",
+        "transcript": "Earthing lug is on the rail but the bond wire looks undersized.",
+        "attributes": { "object": "earthing_bond", "condition": "undersized_suspect" },
+        "verdict": "review",
+        "severity": "med",
+        "citedClause": { "ref": "SOP §5.2", "text": "Protective earthing conductor size must match the inverter manufacturer table." },
+        "reason": "Bond is present but conductor gauge cannot be confirmed from the photo.",
+        "photoUrls": ["https://placehold.co/800x600/png?text=Earthing"]
+      }
+    ],
+    "report": { "id": "99999999-0002-4000-8000-000000000002", "status": "pending" }
+  }
+}

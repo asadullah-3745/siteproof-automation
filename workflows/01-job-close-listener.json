@@ -1,12 +1,680 @@
 {
-  "name": "01 - job.closed listener (master)",
+  "id": "siteproof-wf1-job-close-listener",
+  "name": "01 - Job-close listener (master)",
+  "active": false,
   "nodes": [
-    { "parameters": { "httpMethod": "POST", "path": "job-closed" },
-      "name": "Webhook job.closed", "type": "n8n-nodes-base.webhook",
-      "typeVersion": 1, "position": [250, 300] },
-    { "parameters": { "functionCode": "// TODO: validate payload, dedupe on job.id\nreturn items;" },
-      "name": "Validate + dedupe", "type": "n8n-nodes-base.function",
-      "typeVersion": 1, "position": [500, 300] }
+    {
+      "id": "wf1-note",
+      "name": "wf1-note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        0
+      ],
+      "parameters": {
+        "content": "## WF1 — job.closed listener\n\nPath: `POST /webhook/siteproof-job-closed` (raw body)\nHMAC: `sha256 = HMAC(WEBHOOK_SECRET, timestamp.rawBody)`\nDedupe: delivery id + job.id\nAfter 202: fan-out **in parallel** to WF2–WF5.\nWF2 PDF · WF3 routing · WF4 critical · WF5 sheet\nChildren skip / no-op when filters empty.\nConfig from `org.settings`. Callbacks use `X-Api-Key`.",
+        "width": 560,
+        "height": 360,
+        "color": 7
+      }
+    },
+    {
+      "id": "wf1-webhook",
+      "name": "Webhook job.closed",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        420
+      ],
+      "webhookId": "siteproof-job-closed",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "siteproof-job-closed",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      }
+    },
+    {
+      "id": "wf1-manual",
+      "name": "Manual test (fixture)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        640
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "wf1-hmac",
+      "name": "Verify HMAC",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        420
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const crypto = require('crypto');\nfunction envConfig() {\n  return {\n    api_base_url: \"http://host.docker.internal:3000/api/v1\",\n    api_key: \"6e7a13827c81a340912848525588109f893aabcb017d7c59769d817ee3aa12c42350e1b599ae0134a3d11883b3044f73\",\n    webhook_secret: \"change-me-to-a-long-random-webhook-secret\",\n    from_email: \"alerts@siteproof.local\",\n    supervisor_email_default: \"asadullah.rana153@gmail.com\",\n    slack_webhook_url: \"\",\n    pdf_api_url: \"http://gotenberg:3000/forms/chromium/convert/html\",\n    sheet_tab: \"Job Outcomes\",\n    sheet_id_default: \"16L4snMGoJ3aiuWNJzRaNIgRambQxkvb2Sg15W-lnMOk\",\n    admin_origin_default: \"http://localhost:5173\",\n    org_name_default: \"KeepCodeIn Solar\",\n    logo_url_default: \"\",\n    primary_color_default: \"#0B3D2E\",\n    cloudinary_cloud_name: \"dtndx858m\",\n    cloudinary_api_key: \"133699758828445\",\n    cloudinary_api_secret: \"PfCMNer_7EdK0_YWk8ecUt6LYbY\",\n    cloudinary_folder: \"siteproof/reports\",\n  };\n}\n\nfunction normalizeFinding(f) {\n  const clause = f.citedClause || f.cited_clause || {};\n  const photos = f.photoUrls || f.media_refs || [];\n  return {\n    id: f.id,\n    transcript: f.transcript || '',\n    attributes: f.attributes || f.extracted_attrs || {},\n    extracted_attrs: f.attributes || f.extracted_attrs || {},\n    verdict: f.verdict,\n    severity: f.severity,\n    citedClause: clause,\n    cited_clause: clause,\n    reason: f.reason || '',\n    photoUrls: photos,\n    media_refs: photos,\n  };\n}\n\nfunction countFindings(findings) {\n  return {\n    pass: findings.filter(function (f) { return f.verdict === 'pass'; }).length,\n    review: findings.filter(function (f) { return f.verdict === 'review'; }).length,\n    fail: findings.filter(function (f) { return f.verdict === 'fail'; }).length,\n  };\n}\n\nfunction headlineFromCounts(counts) {\n  if (counts.fail) return 'fail';\n  if (counts.review) return 'review';\n  if (counts.pass) return 'pass';\n  return 'open';\n}\n\nfunction wrapPayload(input) {\n  const envc = envConfig();\n  let body = input;\n  if (input && input.body && (input.body.job || input.body.event === 'job.closed' || input.body.event_type)) {\n    body = input.body;\n  }\n  if (body.job && body.job.id) {\n    const jobIn = body.job;\n    const org = body.org || {};\n    const settings = org.settings || {};\n    const branding = org.branding || {};\n    const findings = (jobIn.findings || []).map(normalizeFinding);\n    const counts = jobIn.counts || countFindings(findings);\n    const admin = String(settings.adminOrigin || envc.admin_origin_default || 'http://localhost:5173').replace(/\\/$/, '');\n    const job = Object.assign({}, jobIn, {\n      findings: findings,\n      counts: counts,\n      headline: jobIn.headline || headlineFromCounts(counts),\n      jobType: jobIn.jobType || jobIn.job_type || '',\n    });\n    return {\n      deliveryId: body.deliveryId || '',\n      occurredAt: body.occurredAt,\n      org: org,\n      job: job,\n      flags: {\n        needs_routing: findings.some(function (f) { return f.verdict === 'review' || f.verdict === 'fail'; }),\n        needs_critical: findings.some(function (f) { return f.verdict === 'fail' && String(f.severity).toLowerCase() === 'high'; }),\n        needs_enrichment: findings.some(function (f) {\n          return !(f.photoUrls && f.photoUrls.length);\n        }),\n      },\n      config: Object.assign({}, envc, {\n        supervisor_email: settings.supervisorEmail || envc.supervisor_email_default,\n        alert_channel: settings.alertChannel || 'email',\n        critical_channel: settings.criticalChannel || 'email',\n        sheet_id: settings.sheetId || envc.sheet_id_default,\n        admin_origin: admin,\n        timestamp: String(Math.floor(Date.now() / 1000)),\n        branding: {\n          name: org.name || envc.org_name_default,\n          logo_url: branding.logoUrl || envc.logo_url_default,\n          primary_color: branding.primaryColor || envc.primary_color_default,\n        },\n      }),\n      job_url: admin + '/jobs/' + job.id,\n      report_url: admin + '/jobs/' + job.id,\n    };\n  }\n  throw new Error('INVALID_PAYLOAD: expected job.closed body with job.id');\n}\n\nasync function siteproofRequest(method, urlPath, body, idempotencyType, ctx) {\n  const ts = String(Math.floor(Date.now() / 1000));\n  const headers = {\n    'Content-Type': 'application/json',\n    'X-Api-Key': ctx.config.api_key,\n    'X-SiteProof-Timestamp': ts,\n  };\n  if (idempotencyType) headers['Idempotency-Key'] = ctx.job.id + ':' + idempotencyType;\n  return this.helpers.httpRequest({\n    method: method,\n    url: ctx.config.api_base_url + urlPath,\n    headers: headers,\n    body: body,\n    json: true,\n    ignoreHttpStatusErrors: true,\n    returnFullResponse: true,\n  });\n}\n\nasync function postAction(ctx, type, target, status, metadata) {\n  const key = ctx.job.id + ':' + type;\n  const staticData = $getWorkflowStaticData('global');\n  staticData.claims = staticData.claims || {};\n  staticData.claims[key] = { status: status, at: new Date().toISOString() };\n  try {\n    await siteproofRequest.call(this, 'POST', '/webhooks/n8n/actions', {\n      jobId: ctx.job.id,\n      type: type,\n      target: target || null,\n      status: status,\n      metadata: metadata || {},\n    }, type, ctx);\n  } catch (e) {}\n  return { type: type, target: target, status: status, metadata: metadata || {} };\n}\n\nfunction alreadyDone(jobId, type) {\n  const staticData = $getWorkflowStaticData('global');\n  staticData.claims = staticData.claims || {};\n  const row = staticData.claims[jobId + ':' + type];\n  return row && row.status === 'ok';\n}\n\nconst item = $input.first();\nconst rawJson = item.json || {};\nconst headers = rawJson.headers || {};\n\nconst secret = String(envConfig().webhook_secret || '');\nconst ts = headers['x-siteproof-timestamp'] || headers['X-SiteProof-Timestamp'] || '';\nconst sigHeader = String(headers['x-siteproof-signature'] || headers['X-SiteProof-Signature'] || '');\nconst sig = sigHeader.replace(/^sha256=/i, '');\n\nif (!secret || secret.length < 16) {\n  return [{ json: { ok: false, httpStatus: 401, error: 'WEBHOOK_SECRET is not configured' } }];\n}\nif (!ts || Math.abs(Date.now() / 1000 - Number(ts)) > 300) {\n  return [{ json: { ok: false, httpStatus: 401, error: 'stale webhook' } }];\n}\n\nlet raw = '';\ntry {\n  if (item.binary && (item.binary.data || item.binary.body)) {\n    const field = item.binary.data ? 'data' : 'body';\n    const buf = await this.helpers.getBinaryDataBuffer(0, field);\n    raw = Buffer.from(buf).toString('utf8');\n  }\n} catch (e) {}\nif (!raw) {\n  raw = rawJson.bodyRaw || (rawJson.body ? JSON.stringify(rawJson.body) : JSON.stringify(rawJson));\n}\n\nconst expected = crypto.createHmac('sha256', secret).update(String(ts) + '.' + raw).digest('hex');\nconst a = Buffer.from(sig, 'utf8');\nconst b = Buffer.from(expected, 'utf8');\nif (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {\n  return [{ json: { ok: false, httpStatus: 401, error: 'bad signature' } }];\n}\n\nlet payload;\ntry {\n  payload = rawJson.body && rawJson.body.job ? rawJson.body : JSON.parse(raw);\n} catch (e) {\n  payload = rawJson.body || rawJson;\n}\nif (!payload.job || !payload.job.id) {\n  return [{ json: { ok: false, httpStatus: 400, error: 'INVALID_PAYLOAD: missing job.id' } }];\n}\nif (payload.event && payload.event !== 'job.closed') {\n  return [{ json: { ok: false, httpStatus: 400, error: 'INVALID_PAYLOAD: expected event job.closed' } }];\n}\n\nconst deliveryId = headers['x-siteproof-delivery-id'] || headers['X-SiteProof-Delivery-Id'] || payload.deliveryId;\npayload.deliveryId = payload.deliveryId || deliveryId;\n\nconst staticData = $getWorkflowStaticData('global');\nstaticData.deliveries = staticData.deliveries || {};\nstaticData.jobs = staticData.jobs || {};\nif (deliveryId && staticData.deliveries[deliveryId]) {\n  const ctx = wrapPayload(payload);\n  ctx.ok = true;\n  ctx.httpStatus = 202;\n  ctx.duplicateDelivery = true;\n  return [{ json: ctx }];\n}\nif (deliveryId) staticData.deliveries[deliveryId] = true;\n\nconst ctx = wrapPayload(payload);\nctx.ok = true;\nctx.httpStatus = 202;\nctx.duplicateJob = Boolean(staticData.jobs[ctx.job.id]);\nreturn [{ json: ctx }];"
+      }
+    },
+    {
+      "id": "wf1-normalize",
+      "name": "Normalize fixture",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        640
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function envConfig() {\n  return {\n    api_base_url: \"http://host.docker.internal:3000/api/v1\",\n    api_key: \"6e7a13827c81a340912848525588109f893aabcb017d7c59769d817ee3aa12c42350e1b599ae0134a3d11883b3044f73\",\n    webhook_secret: \"change-me-to-a-long-random-webhook-secret\",\n    from_email: \"alerts@siteproof.local\",\n    supervisor_email_default: \"asadullah.rana153@gmail.com\",\n    slack_webhook_url: \"\",\n    pdf_api_url: \"http://gotenberg:3000/forms/chromium/convert/html\",\n    sheet_tab: \"Job Outcomes\",\n    sheet_id_default: \"16L4snMGoJ3aiuWNJzRaNIgRambQxkvb2Sg15W-lnMOk\",\n    admin_origin_default: \"http://localhost:5173\",\n    org_name_default: \"KeepCodeIn Solar\",\n    logo_url_default: \"\",\n    primary_color_default: \"#0B3D2E\",\n    cloudinary_cloud_name: \"dtndx858m\",\n    cloudinary_api_key: \"133699758828445\",\n    cloudinary_api_secret: \"PfCMNer_7EdK0_YWk8ecUt6LYbY\",\n    cloudinary_folder: \"siteproof/reports\",\n  };\n}\n\nfunction normalizeFinding(f) {\n  const clause = f.citedClause || f.cited_clause || {};\n  const photos = f.photoUrls || f.media_refs || [];\n  return {\n    id: f.id,\n    transcript: f.transcript || '',\n    attributes: f.attributes || f.extracted_attrs || {},\n    extracted_attrs: f.attributes || f.extracted_attrs || {},\n    verdict: f.verdict,\n    severity: f.severity,\n    citedClause: clause,\n    cited_clause: clause,\n    reason: f.reason || '',\n    photoUrls: photos,\n    media_refs: photos,\n  };\n}\n\nfunction countFindings(findings) {\n  return {\n    pass: findings.filter(function (f) { return f.verdict === 'pass'; }).length,\n    review: findings.filter(function (f) { return f.verdict === 'review'; }).length,\n    fail: findings.filter(function (f) { return f.verdict === 'fail'; }).length,\n  };\n}\n\nfunction headlineFromCounts(counts) {\n  if (counts.fail) return 'fail';\n  if (counts.review) return 'review';\n  if (counts.pass) return 'pass';\n  return 'open';\n}\n\nfunction wrapPayload(input) {\n  const envc = envConfig();\n  let body = input;\n  if (input && input.body && (input.body.job || input.body.event === 'job.closed' || input.body.event_type)) {\n    body = input.body;\n  }\n  if (body.job && body.job.id) {\n    const jobIn = body.job;\n    const org = body.org || {};\n    const settings = org.settings || {};\n    const branding = org.branding || {};\n    const findings = (jobIn.findings || []).map(normalizeFinding);\n    const counts = jobIn.counts || countFindings(findings);\n    const admin = String(settings.adminOrigin || envc.admin_origin_default || 'http://localhost:5173').replace(/\\/$/, '');\n    const job = Object.assign({}, jobIn, {\n      findings: findings,\n      counts: counts,\n      headline: jobIn.headline || headlineFromCounts(counts),\n      jobType: jobIn.jobType || jobIn.job_type || '',\n    });\n    return {\n      deliveryId: body.deliveryId || '',\n      occurredAt: body.occurredAt,\n      org: org,\n      job: job,\n      flags: {\n        needs_routing: findings.some(function (f) { return f.verdict === 'review' || f.verdict === 'fail'; }),\n        needs_critical: findings.some(function (f) { return f.verdict === 'fail' && String(f.severity).toLowerCase() === 'high'; }),\n        needs_enrichment: findings.some(function (f) {\n          return !(f.photoUrls && f.photoUrls.length);\n        }),\n      },\n      config: Object.assign({}, envc, {\n        supervisor_email: settings.supervisorEmail || envc.supervisor_email_default,\n        alert_channel: settings.alertChannel || 'email',\n        critical_channel: settings.criticalChannel || 'email',\n        sheet_id: settings.sheetId || envc.sheet_id_default,\n        admin_origin: admin,\n        timestamp: String(Math.floor(Date.now() / 1000)),\n        branding: {\n          name: org.name || envc.org_name_default,\n          logo_url: branding.logoUrl || envc.logo_url_default,\n          primary_color: branding.primaryColor || envc.primary_color_default,\n        },\n      }),\n      job_url: admin + '/jobs/' + job.id,\n      report_url: admin + '/jobs/' + job.id,\n    };\n  }\n  throw new Error('INVALID_PAYLOAD: expected job.closed body with job.id');\n}\n\nasync function siteproofRequest(method, urlPath, body, idempotencyType, ctx) {\n  const ts = String(Math.floor(Date.now() / 1000));\n  const headers = {\n    'Content-Type': 'application/json',\n    'X-Api-Key': ctx.config.api_key,\n    'X-SiteProof-Timestamp': ts,\n  };\n  if (idempotencyType) headers['Idempotency-Key'] = ctx.job.id + ':' + idempotencyType;\n  return this.helpers.httpRequest({\n    method: method,\n    url: ctx.config.api_base_url + urlPath,\n    headers: headers,\n    body: body,\n    json: true,\n    ignoreHttpStatusErrors: true,\n    returnFullResponse: true,\n  });\n}\n\nasync function postAction(ctx, type, target, status, metadata) {\n  const key = ctx.job.id + ':' + type;\n  const staticData = $getWorkflowStaticData('global');\n  staticData.claims = staticData.claims || {};\n  staticData.claims[key] = { status: status, at: new Date().toISOString() };\n  try {\n    await siteproofRequest.call(this, 'POST', '/webhooks/n8n/actions', {\n      jobId: ctx.job.id,\n      type: type,\n      target: target || null,\n      status: status,\n      metadata: metadata || {},\n    }, type, ctx);\n  } catch (e) {}\n  return { type: type, target: target, status: status, metadata: metadata || {} };\n}\n\nfunction alreadyDone(jobId, type) {\n  const staticData = $getWorkflowStaticData('global');\n  staticData.claims = staticData.claims || {};\n  const row = staticData.claims[jobId + ':' + type];\n  return row && row.status === 'ok';\n}\nconst item = $input.first().json;\nif (item.job && item.config && item.job.id) {\n  return [{ json: item }];\n}\ntry {\n  const ctx = wrapPayload(item);\n  ctx.ok = true;\n  return [{ json: ctx }];\n} catch (e) {\n  return [{ json: { ok: false, httpStatus: 400, error: e.message } }];\n}"
+      }
+    },
+    {
+      "id": "wf1-merge",
+      "name": "Validated payload",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        560,
+        520
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "wf1-if-ok",
+      "name": "Payload valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        800,
+        520
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "wf1-if-ok-cond",
+              "leftValue": "={{ $json.ok !== false }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wf1-respond-err",
+      "name": "Respond 4xx",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1080,
+        720
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ accepted: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.httpStatus || 401 }}"
+        }
+      }
+    },
+    {
+      "id": "wf1-respond-ok",
+      "name": "Respond 202 accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1080,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ accepted: true, deliveryId: $json.deliveryId, jobId: $json.job.id, flags: $json.flags, duplicate: $json.duplicateDelivery || $json.duplicateJob }) }}",
+        "options": {
+          "responseCode": 202
+        }
+      }
+    },
+    {
+      "id": "wf1-if-dup",
+      "name": "Duplicate job?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1360,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "wf1-if-dup-cond",
+              "leftValue": "={{ Boolean($json.duplicateDelivery || $json.duplicateJob) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wf1-dup-stop",
+      "name": "Already processed job",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1640,
+        280
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "wf1-if-enrich",
+      "name": "Needs photo refresh?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1640,
+        480
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "wf1-if-enrich-cond",
+              "leftValue": "={{ $json.flags.needs_enrichment }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wf1-get-job",
+      "name": "GET /jobs/:id",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1920,
+        360
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.config.api_base_url }}/jobs/{{ $json.job.id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Api-Key",
+              "value": "={{ $json.config.api_key }}"
+            },
+            {
+              "name": "X-SiteProof-Timestamp",
+              "value": "={{ $json.config.timestamp }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "wf1-merge-job",
+      "name": "Merge fresh photoUrls",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        360
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function envConfig() {\n  return {\n    api_base_url: \"http://host.docker.internal:3000/api/v1\",\n    api_key: \"6e7a13827c81a340912848525588109f893aabcb017d7c59769d817ee3aa12c42350e1b599ae0134a3d11883b3044f73\",\n    webhook_secret: \"change-me-to-a-long-random-webhook-secret\",\n    from_email: \"alerts@siteproof.local\",\n    supervisor_email_default: \"asadullah.rana153@gmail.com\",\n    slack_webhook_url: \"\",\n    pdf_api_url: \"http://gotenberg:3000/forms/chromium/convert/html\",\n    sheet_tab: \"Job Outcomes\",\n    sheet_id_default: \"16L4snMGoJ3aiuWNJzRaNIgRambQxkvb2Sg15W-lnMOk\",\n    admin_origin_default: \"http://localhost:5173\",\n    org_name_default: \"KeepCodeIn Solar\",\n    logo_url_default: \"\",\n    primary_color_default: \"#0B3D2E\",\n    cloudinary_cloud_name: \"dtndx858m\",\n    cloudinary_api_key: \"133699758828445\",\n    cloudinary_api_secret: \"PfCMNer_7EdK0_YWk8ecUt6LYbY\",\n    cloudinary_folder: \"siteproof/reports\",\n  };\n}\n\nfunction normalizeFinding(f) {\n  const clause = f.citedClause || f.cited_clause || {};\n  const photos = f.photoUrls || f.media_refs || [];\n  return {\n    id: f.id,\n    transcript: f.transcript || '',\n    attributes: f.attributes || f.extracted_attrs || {},\n    extracted_attrs: f.attributes || f.extracted_attrs || {},\n    verdict: f.verdict,\n    severity: f.severity,\n    citedClause: clause,\n    cited_clause: clause,\n    reason: f.reason || '',\n    photoUrls: photos,\n    media_refs: photos,\n  };\n}\n\nfunction countFindings(findings) {\n  return {\n    pass: findings.filter(function (f) { return f.verdict === 'pass'; }).length,\n    review: findings.filter(function (f) { return f.verdict === 'review'; }).length,\n    fail: findings.filter(function (f) { return f.verdict === 'fail'; }).length,\n  };\n}\n\nfunction headlineFromCounts(counts) {\n  if (counts.fail) return 'fail';\n  if (counts.review) return 'review';\n  if (counts.pass) return 'pass';\n  return 'open';\n}\n\nfunction wrapPayload(input) {\n  const envc = envConfig();\n  let body = input;\n  if (input && input.body && (input.body.job || input.body.event === 'job.closed' || input.body.event_type)) {\n    body = input.body;\n  }\n  if (body.job && body.job.id) {\n    const jobIn = body.job;\n    const org = body.org || {};\n    const settings = org.settings || {};\n    const branding = org.branding || {};\n    const findings = (jobIn.findings || []).map(normalizeFinding);\n    const counts = jobIn.counts || countFindings(findings);\n    const admin = String(settings.adminOrigin || envc.admin_origin_default || 'http://localhost:5173').replace(/\\/$/, '');\n    const job = Object.assign({}, jobIn, {\n      findings: findings,\n      counts: counts,\n      headline: jobIn.headline || headlineFromCounts(counts),\n      jobType: jobIn.jobType || jobIn.job_type || '',\n    });\n    return {\n      deliveryId: body.deliveryId || '',\n      occurredAt: body.occurredAt,\n      org: org,\n      job: job,\n      flags: {\n        needs_routing: findings.some(function (f) { return f.verdict === 'review' || f.verdict === 'fail'; }),\n        needs_critical: findings.some(function (f) { return f.verdict === 'fail' && String(f.severity).toLowerCase() === 'high'; }),\n        needs_enrichment: findings.some(function (f) {\n          return !(f.photoUrls && f.photoUrls.length);\n        }),\n      },\n      config: Object.assign({}, envc, {\n        supervisor_email: settings.supervisorEmail || envc.supervisor_email_default,\n        alert_channel: settings.alertChannel || 'email',\n        critical_channel: settings.criticalChannel || 'email',\n        sheet_id: settings.sheetId || envc.sheet_id_default,\n        admin_origin: admin,\n        timestamp: String(Math.floor(Date.now() / 1000)),\n        branding: {\n          name: org.name || envc.org_name_default,\n          logo_url: branding.logoUrl || envc.logo_url_default,\n          primary_color: branding.primaryColor || envc.primary_color_default,\n        },\n      }),\n      job_url: admin + '/jobs/' + job.id,\n      report_url: admin + '/jobs/' + job.id,\n    };\n  }\n  throw new Error('INVALID_PAYLOAD: expected job.closed body with job.id');\n}\n\nasync function siteproofRequest(method, urlPath, body, idempotencyType, ctx) {\n  const ts = String(Math.floor(Date.now() / 1000));\n  const headers = {\n    'Content-Type': 'application/json',\n    'X-Api-Key': ctx.config.api_key,\n    'X-SiteProof-Timestamp': ts,\n  };\n  if (idempotencyType) headers['Idempotency-Key'] = ctx.job.id + ':' + idempotencyType;\n  return this.helpers.httpRequest({\n    method: method,\n    url: ctx.config.api_base_url + urlPath,\n    headers: headers,\n    body: body,\n    json: true,\n    ignoreHttpStatusErrors: true,\n    returnFullResponse: true,\n  });\n}\n\nasync function postAction(ctx, type, target, status, metadata) {\n  const key = ctx.job.id + ':' + type;\n  const staticData = $getWorkflowStaticData('global');\n  staticData.claims = staticData.claims || {};\n  staticData.claims[key] = { status: status, at: new Date().toISOString() };\n  try {\n    await siteproofRequest.call(this, 'POST', '/webhooks/n8n/actions', {\n      jobId: ctx.job.id,\n      type: type,\n      target: target || null,\n      status: status,\n      metadata: metadata || {},\n    }, type, ctx);\n  } catch (e) {}\n  return { type: type, target: target, status: status, metadata: metadata || {} };\n}\n\nfunction alreadyDone(jobId, type) {\n  const staticData = $getWorkflowStaticData('global');\n  staticData.claims = staticData.claims || {};\n  const row = staticData.claims[jobId + ':' + type];\n  return row && row.status === 'ok';\n}\nconst ctx = $('Respond 202 accepted').first().json;\nconst res = $input.first().json || {};\nconst data = res.data || res;\nconst findings = data.findings;\nif (Array.isArray(findings) && findings.length) {\n  const byId = {};\n  findings.forEach(function (f) { if (f && f.id) byId[f.id] = normalizeFinding(f); });\n  ctx.job.findings = (ctx.job.findings || []).map(function (f) {\n    const extra = byId[f.id];\n    if (!extra) return f;\n    return Object.assign({}, f, extra, {\n      photoUrls: (extra.photoUrls && extra.photoUrls.length) ? extra.photoUrls : f.photoUrls,\n      media_refs: (extra.photoUrls && extra.photoUrls.length) ? extra.photoUrls : f.media_refs,\n    });\n  });\n}\nctx.flags.needs_enrichment = false;\nreturn [{ json: ctx }];"
+      }
+    },
+    {
+      "id": "wf1-fanout",
+      "name": "Fan-out (parallel)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2480,
+        480
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "wf1-exec-wf2",
+      "name": "Execute WF2 Report generation",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2760,
+        120
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "siteproof-wf2-report-generation",
+          "mode": "id",
+          "cachedResultName": "02 - Report generation"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    },
+    {
+      "id": "wf1-exec-wf3",
+      "name": "Execute WF3 Issue routing",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2760,
+        320
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "siteproof-wf3-issue-routing",
+          "mode": "id",
+          "cachedResultName": "03 - Issue routing"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    },
+    {
+      "id": "wf1-exec-wf4",
+      "name": "Execute WF4 Critical alert",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2760,
+        520
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "siteproof-wf4-critical-alert",
+          "mode": "id",
+          "cachedResultName": "04 - Critical alert"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    },
+    {
+      "id": "wf1-exec-wf5",
+      "name": "Execute WF5 System update",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2760,
+        720
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "siteproof-wf5-system-update",
+          "mode": "id",
+          "cachedResultName": "05 - System update"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    }
   ],
-  "connections": { "Webhook job.closed": { "main": [[{ "node": "Validate + dedupe", "type": "main", "index": 0 }]] } }
+  "connections": {
+    "Webhook job.closed": {
+      "main": [
+        [
+          {
+            "node": "Verify HMAC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual test (fixture)": {
+      "main": [
+        [
+          {
+            "node": "Normalize fixture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify HMAC": {
+      "main": [
+        [
+          {
+            "node": "Validated payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize fixture": {
+      "main": [
+        [
+          {
+            "node": "Validated payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validated payload": {
+      "main": [
+        [
+          {
+            "node": "Payload valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payload valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond 202 accepted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 4xx",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 202 accepted": {
+      "main": [
+        [
+          {
+            "node": "Duplicate job?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duplicate job?": {
+      "main": [
+        [
+          {
+            "node": "Already processed job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Needs photo refresh?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs photo refresh?": {
+      "main": [
+        [
+          {
+            "node": "GET /jobs/:id",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fan-out (parallel)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET /jobs/:id": {
+      "main": [
+        [
+          {
+            "node": "Merge fresh photoUrls",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge fresh photoUrls": {
+      "main": [
+        [
+          {
+            "node": "Fan-out (parallel)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fan-out (parallel)": {
+      "main": [
+        [
+          {
+            "node": "Execute WF2 Report generation",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Execute WF3 Issue routing",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Execute WF4 Critical alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Execute WF5 System update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {
+    "Manual test (fixture)": [
+      {
+        "json": {
+          "event": "job.closed",
+          "deliveryId": "3d2a0b1e-4c55-4c0e-9c3a-0b9f6e2a1111",
+          "occurredAt": "2026-08-19T09:20:00.000Z",
+          "org": {
+            "id": "bbbbbbbb-0001-4000-8000-000000000001",
+            "name": "KeepCodeIn Solar",
+            "branding": {
+              "primaryColor": "#0B3D2E",
+              "logoUrl": null
+            },
+            "settings": {
+              "alertChannel": "email",
+              "supervisorEmail": "supervisor@siteproof.local",
+              "criticalChannel": "email",
+              "adminOrigin": "http://localhost:5173",
+              "sheetId": null
+            }
+          },
+          "job": {
+            "id": "cccccccc-0004-4000-8000-000000000004",
+            "site": "12 Oak Lane, inverter bay",
+            "jobType": "solar_install_inspection",
+            "status": "closed",
+            "closedAt": "2026-08-19T09:20:00.000Z",
+            "rulebookId": "dddddddd-0001-4000-8000-000000000001",
+            "worker": {
+              "id": "eeeeeeee-0001-4000-8000-000000000001",
+              "name": "Ali Worker",
+              "email": "worker@siteproof.local"
+            },
+            "counts": {
+              "pass": 1,
+              "review": 1,
+              "fail": 1
+            },
+            "headline": "fail",
+            "findings": [
+              {
+                "id": "ffffffff-0004-4000-8000-000000000030",
+                "transcript": "Array torque marks are good.",
+                "attributes": {
+                  "object": "solar_array",
+                  "condition": "secured"
+                },
+                "verdict": "pass",
+                "severity": "low",
+                "citedClause": {
+                  "ref": "SOP §2.1",
+                  "text": "Modules must be mechanically fastened at all specified clamp points."
+                },
+                "reason": "All visible clamps show torque paint.",
+                "photoUrls": [
+                  "https://placehold.co/800x600/png?text=Array"
+                ]
+              },
+              {
+                "id": "ffffffff-0004-4000-8000-000000000031",
+                "transcript": "AC isolator label is faded.",
+                "attributes": {
+                  "object": "ac_isolator",
+                  "condition": "label_faded"
+                },
+                "verdict": "review",
+                "severity": "low",
+                "citedClause": {
+                  "ref": "SOP §3.4",
+                  "text": "Isolators must be permanently labelled."
+                },
+                "reason": "Label present but durability is questionable.",
+                "photoUrls": [
+                  "https://placehold.co/800x600/png?text=Labelling"
+                ]
+              },
+              {
+                "id": "ffffffff-0004-4000-8000-000000000032",
+                "transcript": "wiring exposed near the inverter",
+                "attributes": {
+                  "object": "cable",
+                  "condition": "exposed",
+                  "location": "inverter",
+                  "apparentIssue": "conductors not enclosed"
+                },
+                "verdict": "fail",
+                "severity": "high",
+                "citedClause": {
+                  "ref": "SOP §4.2",
+                  "text": "Conductors must be enclosed."
+                },
+                "reason": "Exposed cabling at the inverter is not enclosed.",
+                "photoUrls": [
+                  "https://placehold.co/800x600/png?text=Exposed+DC"
+                ]
+              }
+            ],
+            "report": {
+              "id": "99999999-0004-4000-8000-000000000004",
+              "status": "pending"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
 }
